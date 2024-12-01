@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "s3dict"
+version = "0.1.0"
+description = "Distributed Python dictionary backed by S3"
+authors = ["Jackie Tung <jackie.tung@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+packages = [{include = "s3dict"}]
+
+[tool.poetry.dependencies]
+python = ">=3.8"
+boto3 = ">=1.20"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0.0"
+moto = ">=5.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
