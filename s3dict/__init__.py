@@ -4,6 +4,7 @@ from typing import Dict
 
 from botocore.exceptions import ClientError
 
+
 # TODO pagination everywhere
 # TODO update
 # TODO various constructor flavors
@@ -175,7 +176,7 @@ class S3Dict(Dict):
     _initialized = False
 
     @classmethod
-    def init(cls, s3_client, bucket):
+    def configure(cls, s3_client, bucket):
         cls._s3_client = s3_client
         cls._bucket = bucket
         cls._initialized = True
@@ -219,7 +220,7 @@ class S3Dict(Dict):
         dict(**kwargs) -> new dictionary initialized with the name=value pairs
             in the keyword argument list.  For example:  dict(one=1, two=2)
          - create empty dir, then put key/value pairs into it
-         
+
          # TODO support each of these
         """
         self._bucket = S3Dict._bucket

@@ -1,23 +1,30 @@
 import unittest
-import os
 import boto3
+from moto import mock_aws
 
 from s3dict import S3Dict
 
-os.environ['AWS_ACCESS_KEY_ID'] = 'g48ShmmaEtuyQvopD2p7'
-os.environ['AWS_SECRET_ACCESS_KEY'] = 'wWhCbWHvGhqgn1XrN0trDIgASYwwvV4bwNzrjSkg'
+TEST_BUCKET_NAME = "test"
+TEST_REGION_NAME = "us-west-2"
+S3_CLIENT = boto3.client('s3', region_name=TEST_REGION_NAME)
+S3Dict.configure(S3_CLIENT, TEST_BUCKET_NAME)
 
 
 class TestS3Dict(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        s3_client = boto3.client('s3', endpoint_url='http://localhost:9000')
-        S3Dict.init(s3_client, 'test')
+    def setUp(self):
+        self.mock_aws = mock_aws()
+        self.mock_aws.start()
+        S3_CLIENT.create_bucket(Bucket=TEST_BUCKET_NAME,
+                                CreateBucketConfiguration={"LocationConstraint": TEST_REGION_NAME})
 
-    @classmethod
-    def tearDown(cls):
-        for dict_id in S3Dict.dict_ids():
-            S3Dict.purge(dict_id)
+    def tearDown(self):
+        self.mock_aws.stop()
+
+    def test_purge(self):
+        """ TODO """
+
+    def test_dict_ids(self):
+        """ TODO """
 
     def test_set_get_del_cycle(self):
         sd = S3Dict()
