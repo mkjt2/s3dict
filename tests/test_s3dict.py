@@ -21,10 +21,25 @@ class TestS3Dict(unittest.TestCase):
         self.mock_aws.stop()
 
     def test_purge(self):
-        """ TODO """
+        sd = S3Dict()
+        sd["luke"] = "skywalker"
+        sd["obiwan"] = "kenobi"
+
+        self.assertIn(sd.dict_id, S3Dict.dict_ids())
+
+        S3Dict.purge(sd.dict_id)
+        self.assertNotIn(sd.dict_id, S3Dict.dict_ids())
 
     def test_dict_ids(self):
-        """ TODO """
+        sd1 = S3Dict()
+        sd1["luke"] = "skywalker"
+
+        sd2 = S3Dict()
+        sd2["obiwan"] = "kenobi"
+
+        _ = S3Dict()
+
+        self.assertEqual(set(S3Dict.dict_ids()), {sd1.dict_id, sd2.dict_id})
 
     def test_set_get_del_cycle(self):
         sd = S3Dict()
@@ -43,6 +58,9 @@ class TestS3Dict(unittest.TestCase):
         with self.assertRaises(KeyError):
             sd["obiwan"]
 
+        with self.assertRaises(KeyError):
+            sd["x" * 1025] = "X"
+
     def test_iter(self):
         sd = S3Dict()
         sd["luke"] = "skywalker"
@@ -52,7 +70,7 @@ class TestS3Dict(unittest.TestCase):
         for k in sd:
             keys.append(k)
 
-        self.assertEqual(keys, ['luke', 'obiwan'])
+        self.assertEqual(set(keys), set(['luke', 'obiwan']))
 
     def test_keys(self):
         sd = S3Dict()
@@ -63,7 +81,7 @@ class TestS3Dict(unittest.TestCase):
         for k in sd.keys():
             keys.append(k)
 
-        self.assertEqual(keys, ['luke', 'obiwan'])
+        self.assertEqual(set(keys), set(['luke', 'obiwan']))
 
     def test_values(self):
         sd = S3Dict()
@@ -74,7 +92,7 @@ class TestS3Dict(unittest.TestCase):
         for v in sd.values():
             values.append(v)
 
-        self.assertEqual(values, ['skywalker', 'kenobi'])
+        self.assertEqual(set(values), set(['skywalker', 'kenobi']))
 
     def test_items(self):
         sd = S3Dict()
@@ -84,7 +102,7 @@ class TestS3Dict(unittest.TestCase):
         items = []
         for item in sd.items():
             items.append(item)
-        self.assertEqual(items, [('luke', 'skywalker'), ('obiwan', 'kenobi')])
+        self.assertEqual(set(items), {('luke', 'skywalker'), ('obiwan', 'kenobi')})
 
     def test_contains(self):
         sd = S3Dict()

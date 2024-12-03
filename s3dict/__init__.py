@@ -1,5 +1,8 @@
 import pickle
+import typing
 import uuid
+import base64
+
 from typing import Dict
 
 from botocore.exceptions import ClientError
@@ -9,13 +12,53 @@ from botocore.exceptions import ClientError
 # TODO update
 # TODO various constructor flavors
 # TODO setdefault
-# TODO push to git
 # TODO README
 # TODO packaging
 # TODO sys prefix / root (so buckets can be shared)
 # TODO key encoding (base64, check max key length)
 
+class S3DictValueCodec(typing.Protocol):
+    def encode(self, value: typing.Any) -> bytes:
+        ...
+    def decode(self, data: bytes) -> typing.Any:
+        ...
+
+
+class PickleCodec(S3DictValueCodec):
+    def encode(self, value):
+        return pickle.dumps(value)
+
+    def decode(self, data):
+        return pickle.loads(data)
+
 class S3Dict(Dict):
+    @classmethod
+    def configure(cls, s3_client, bucket, codec : typing.Optional[S3DictValueCodec] = None):
+        cls._s3_client = s3_client
+        cls._bucket = bucket
+        if codec is None:
+            codec = PickleCodec()
+        cls._codec = codec
+        cls._initialized = True
+
+    @classmethod
+    def dict_ids(cls):
+        paginator = cls._s3_client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(Bucket=cls._bucket, Delimiter="/"):
+            for record in page.get('CommonPrefixes', []):
+                yield record['Prefix'][:-1]  # strip trailing slash
+
+    @classmethod
+    def purge(cls, dict_id):
+        sd = cls.open(dict_id)
+        sd.clear()
+
+    @classmethod
+    def open(cls, dict_id=None):
+        s = S3Dict()
+        if dict_id:
+            s._dict_id = dict_id
+        return s
 
     def clear(self):
         """ D.clear() -> None.  Remove all items from D. """
@@ -166,7 +209,7 @@ class S3Dict(Dict):
             s3_key = self._item_to_s3_key(item)
             response = self._s3_client.get_object(Bucket=self._bucket, Key=s3_key)
             s3_content = response['Body'].read()
-            return pickle.loads(s3_content)
+            return self._codec.decode(s3_content)
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchKey':
                 raise KeyError(item)
@@ -175,29 +218,7 @@ class S3Dict(Dict):
 
     _initialized = False
 
-    @classmethod
-    def configure(cls, s3_client, bucket):
-        cls._s3_client = s3_client
-        cls._bucket = bucket
-        cls._initialized = True
 
-    @classmethod
-    def dict_ids(cls):
-        response = cls._s3_client.list_objects_v2(Bucket=cls._bucket, Delimiter="/")
-        for record in response.get('CommonPrefixes', []):
-            yield record['Prefix'][:-1]  # strip trailing slash
-
-    @classmethod
-    def purge(cls, dict_id):
-        sd = cls.open(dict_id)
-        sd.clear()
-
-    @classmethod
-    def open(cls, dict_id=None):
-        s = S3Dict()
-        if dict_id:
-            s._dict_id = dict_id
-        return s
 
     @property
     def dict_id(self):
@@ -232,13 +253,13 @@ class S3Dict(Dict):
 
     def __iter__(self):
         """ Implement iter(self). """
-        # TODO paginate
-        response = self._s3_client.list_objects_v2(
+        paginator = self._s3_client.get_paginator('list_objects_v2')
+        for page in paginator.paginate(
             Bucket=self._bucket,
             Prefix=self._get_s3_key_prefix()
-        )
-        for record in response['Contents']:
-            yield self._s3_key_to_item(record['Key'])
+        ):
+            for record in page['Contents']:
+                yield self._s3_key_to_item(record['Key'])
 
     def __len__(self, *args, **kwargs):
         """ Return len(self). """
@@ -249,12 +270,23 @@ class S3Dict(Dict):
 
     def __setitem__(self, item, value):
         """ Set self[key] to value. """
-        s3_content = pickle.dumps(value)
+        s3_content = self._codec.encode(value)
         s3_key = self._item_to_s3_key(item)
         self._s3_client.put_object(Bucket=self._bucket, Body=s3_content, Key=s3_key)
 
-    def _item_to_s3_key(self, item):
-        return f'{self._get_s3_key_prefix()}/{item}'
+    def _item_to_s3_key(self, item: str) -> str:
+        item_bytes = item.encode('utf-8')
 
-    def _s3_key_to_item(self, s3_key):
-        return s3_key[len(self._get_s3_key_prefix()) + 1:]
+        item_base64_bytes = base64.b64encode(item_bytes)
+        item_base64_string = item_base64_bytes.decode('utf-8')
+        result = f'{self._get_s3_key_prefix()}/{item_base64_string}'
+        if len(result) > 1024:
+            raise KeyError('S3 key (post base64 encoding) is too large')
+        return result
+
+    def _s3_key_to_item(self, s3_key: str) -> str:
+        item_base64_string = s3_key[len(self._get_s3_key_prefix()) + 1:]
+        item_base64_bytes = item_base64_string.encode('utf-8')
+        item_bytes = base64.b64decode(item_base64_bytes)
+        return item_bytes.decode('utf-8')
+
