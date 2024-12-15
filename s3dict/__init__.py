@@ -1,25 +1,20 @@
 import pickle
 import typing
-import uuid
-import base64
 
 from typing import Dict
 
 from botocore.exceptions import ClientError
 
 
-# TODO pagination everywhere
 # TODO update
-# TODO various constructor flavors
 # TODO setdefault
 # TODO README
 # TODO packaging
-# TODO sys prefix / root (so buckets can be shared)
-# TODO key encoding (base64, check max key length)
 
 class S3DictValueCodec(typing.Protocol):
     def encode(self, value: typing.Any) -> bytes:
         ...
+
     def decode(self, data: bytes) -> typing.Any:
         ...
 
@@ -31,54 +26,12 @@ class PickleCodec(S3DictValueCodec):
     def decode(self, data):
         return pickle.loads(data)
 
+
 class S3Dict(Dict):
-    @classmethod
-    def configure(cls, s3_client, bucket, codec : typing.Optional[S3DictValueCodec] = None):
-        cls._s3_client = s3_client
-        cls._bucket = bucket
-        if codec is None:
-            codec = PickleCodec()
-        cls._codec = codec
-        cls._initialized = True
-
-    @classmethod
-    def dict_ids(cls):
-        paginator = cls._s3_client.get_paginator('list_objects_v2')
-        for page in paginator.paginate(Bucket=cls._bucket, Delimiter="/"):
-            for record in page.get('CommonPrefixes', []):
-                yield record['Prefix'][:-1]  # strip trailing slash
-
-    @classmethod
-    def purge(cls, dict_id):
-        sd = cls.open(dict_id)
-        sd.clear()
-
-    @classmethod
-    def open(cls, dict_id=None):
-        s = S3Dict()
-        if dict_id:
-            s._dict_id = dict_id
-        return s
-
     def clear(self):
         """ D.clear() -> None.  Remove all items from D. """
         for k in self:
             del self[k]
-
-    def copy(self):
-        """ D.copy() -> a DEEP copy of D """
-        s = S3Dict()
-        for k, v in self.items():
-            s[k] = v
-        return s
-
-    @staticmethod  # known case
-    def fromkeys(iterable, value=None):  # real signature unknown
-        """ Create a new dictionary with keys from iterable and values set to value. """
-        s = S3Dict()
-        for k in iterable:
-            s[k] = value
-        return s
 
     def get(self, item, default=None):  # real signature unknown
         """ Return the value for key if key is in the dictionary, else default. """
@@ -218,45 +171,16 @@ class S3Dict(Dict):
 
     _initialized = False
 
-
-
-    @property
-    def dict_id(self):
-        return self._dict_id
-
-    def __init__(self):
-        if not self._initialized:
-            raise RuntimeError("Please call S3Dict.init() first")
-        """
-        dict() -> new empty dictionary
-         - create s3 subdir (or token marker object)
-        dict(mapping) -> new dictionary initialized from a mapping object's
-            (key, value) pairs
-         - create empty dir, then put key/value pairs into it
-        dict(iterable) -> new dictionary initialized as if via:
-            d = {}
-            for k, v in iterable:
-                d[k] = v
-         - create empty dir, then put key/value pairs into it
-        dict(**kwargs) -> new dictionary initialized with the name=value pairs
-            in the keyword argument list.  For example:  dict(one=1, two=2)
-         - create empty dir, then put key/value pairs into it
-
-         # TODO support each of these
-        """
-        self._bucket = S3Dict._bucket
-        self._s3_client = S3Dict._s3_client
-        self._dict_id = str(uuid.uuid4())
-
-    def _get_s3_key_prefix(self):
-        return self._dict_id
+    def __init__(self, bucket, codec: S3DictValueCodec = PickleCodec()):
+        self._bucket = bucket.name
+        self._codec = codec
+        self._s3_client = bucket.meta.client
 
     def __iter__(self):
         """ Implement iter(self). """
         paginator = self._s3_client.get_paginator('list_objects_v2')
         for page in paginator.paginate(
-            Bucket=self._bucket,
-            Prefix=self._get_s3_key_prefix()
+                Bucket=self._bucket,
         ):
             for record in page['Contents']:
                 yield self._s3_key_to_item(record['Key'])
@@ -275,18 +199,11 @@ class S3Dict(Dict):
         self._s3_client.put_object(Bucket=self._bucket, Body=s3_content, Key=s3_key)
 
     def _item_to_s3_key(self, item: str) -> str:
-        item_bytes = item.encode('utf-8')
-
-        item_base64_bytes = base64.b64encode(item_bytes)
-        item_base64_string = item_base64_bytes.decode('utf-8')
-        result = f'{self._get_s3_key_prefix()}/{item_base64_string}'
-        if len(result) > 1024:
-            raise KeyError('S3 key (post base64 encoding) is too large')
-        return result
+        if type(item) != str:
+            raise KeyError('S3 key must be a string')
+        if len(item) > 1024:
+            raise KeyError('S3 key is too large')
+        return item
 
     def _s3_key_to_item(self, s3_key: str) -> str:
-        item_base64_string = s3_key[len(self._get_s3_key_prefix()) + 1:]
-        item_base64_bytes = item_base64_string.encode('utf-8')
-        item_bytes = base64.b64decode(item_base64_bytes)
-        return item_bytes.decode('utf-8')
-
+        return s3_key
