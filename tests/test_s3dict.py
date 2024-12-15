@@ -1,48 +1,29 @@
 import unittest
 import boto3
+import s3dict
+s3dict.enable()
 from moto import mock_aws
-
-from s3dict import S3Dict
 
 TEST_BUCKET_NAME = "test"
 TEST_REGION_NAME = "us-west-2"
 S3_CLIENT = boto3.client('s3', region_name=TEST_REGION_NAME)
-S3Dict.configure(S3_CLIENT, TEST_BUCKET_NAME)
 
 
 class TestS3Dict(unittest.TestCase):
     def setUp(self):
         self.mock_aws = mock_aws()
         self.mock_aws.start()
-        S3_CLIENT.create_bucket(Bucket=TEST_BUCKET_NAME,
-                                CreateBucketConfiguration={"LocationConstraint": TEST_REGION_NAME})
+        self.bucket = boto3.resource("s3").Bucket(TEST_BUCKET_NAME)
+        self.bucket.create(CreateBucketConfiguration={'LocationConstraint': TEST_REGION_NAME})
 
     def tearDown(self):
         self.mock_aws.stop()
 
-    def test_purge(self):
-        sd = S3Dict()
-        sd["luke"] = "skywalker"
-        sd["obiwan"] = "kenobi"
-
-        self.assertIn(sd.dict_id, S3Dict.dict_ids())
-
-        S3Dict.purge(sd.dict_id)
-        self.assertNotIn(sd.dict_id, S3Dict.dict_ids())
-
-    def test_dict_ids(self):
-        sd1 = S3Dict()
-        sd1["luke"] = "skywalker"
-
-        sd2 = S3Dict()
-        sd2["obiwan"] = "kenobi"
-
-        _ = S3Dict()
-
-        self.assertEqual(set(S3Dict.dict_ids()), {sd1.dict_id, sd2.dict_id})
+    def get_s3dict(self):
+        return self.bucket.s3dict()
 
     def test_set_get_del_cycle(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
         sd["obiwan"] = "kenobi"
 
@@ -62,7 +43,7 @@ class TestS3Dict(unittest.TestCase):
             sd["x" * 1025] = "X"
 
     def test_iter(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
         sd["obiwan"] = "kenobi"
 
@@ -73,7 +54,7 @@ class TestS3Dict(unittest.TestCase):
         self.assertEqual(set(keys), set(['luke', 'obiwan']))
 
     def test_keys(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
         sd["obiwan"] = "kenobi"
 
@@ -84,7 +65,7 @@ class TestS3Dict(unittest.TestCase):
         self.assertEqual(set(keys), set(['luke', 'obiwan']))
 
     def test_values(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
         sd["obiwan"] = "kenobi"
 
@@ -95,7 +76,7 @@ class TestS3Dict(unittest.TestCase):
         self.assertEqual(set(values), set(['skywalker', 'kenobi']))
 
     def test_items(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
         sd["obiwan"] = "kenobi"
 
@@ -105,20 +86,20 @@ class TestS3Dict(unittest.TestCase):
         self.assertEqual(set(items), {('luke', 'skywalker'), ('obiwan', 'kenobi')})
 
     def test_contains(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
 
         self.assertTrue('luke' in sd)
         self.assertTrue('obiwan' not in sd)
 
     def test_get(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         self.assertEqual(sd.get("something", 'not there'), 'not there')
         sd['something'] = 'there'
         self.assertEqual(sd.get("something", 'not there'), 'there')
 
     def test_clear(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["luke"] = "skywalker"
         sd["obiwan"] = "kenobi"
 
@@ -127,40 +108,26 @@ class TestS3Dict(unittest.TestCase):
         self.assertTrue('obiwan' not in sd)
 
     def test_clone_to_regular_dict(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         d = {}
         sd['luke'] = 'skywalker'
         d['luke'] = 'skywalker'
         self.assertDictEqual(d, dict(sd))
 
     def test_eq(self):
-        sd1 = S3Dict()
+        sd1 = self.get_s3dict()
         sd1["luke"] = "skywalker"
         sd1["obiwan"] = "kenobi"
 
-        sd2 = S3Dict()
+        another_bucket = boto3.resource("s3").Bucket('another_bucket')
+        another_bucket.create(CreateBucketConfiguration={'LocationConstraint': TEST_REGION_NAME})
+        sd2 = another_bucket.s3dict()
         sd2["luke"] = "skywalker"
         sd2["obiwan"] = "kenobeeeeeeee"
         self.assertNotEqual(sd1, sd2)
 
-    def test_copy(self):
-        sd1 = S3Dict()
-        sd1["luke"] = "skywalker"
-        sd1["obiwan"] = "kenobi"
-
-        sd2 = sd1.copy()
-
-        self.assertEqual(sd1, sd2)
-
-        sd2["darth"] = "vader"
-        self.assertNotEqual(sd1, sd2)
-
-    def test_from_keys(self):
-        sd = S3Dict.fromkeys(["k1", "k2"], value=None)
-        self.assertEqual(dict(sd), {'k1': None, 'k2': None})
-
     def test_pop(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["a"] = 1
         sd["b"] = 2
 
@@ -171,7 +138,7 @@ class TestS3Dict(unittest.TestCase):
             sd.pop('b')
 
     def test_popitem(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["a"] = 1
         sd["b"] = 2
 
@@ -183,18 +150,10 @@ class TestS3Dict(unittest.TestCase):
             sd.popitem()
 
     def test_len(self):
-        sd = S3Dict()
+        sd = self.get_s3dict()
         sd["a"] = 1
         sd["b"] = 2
         self.assertEqual(len(sd), 2)
-
-    def test_open(self):
-        sd1 = S3Dict()
-
-        sd2 = S3Dict.open(sd1.dict_id)
-
-        sd1['a'] = 1
-        self.assertEqual(sd2['a'], 1)
 
 
 if __name__ == '__main__':

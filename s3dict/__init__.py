@@ -4,6 +4,20 @@ import typing
 from typing import Dict
 
 from botocore.exceptions import ClientError
+from boto3 import Session
+
+
+def enable():
+    old_session_init = Session.__init__
+
+    def add_custom_method(class_attributes, **kwargs):
+        class_attributes['s3dict'] = lambda self: S3Dict(self);
+
+    def new_session_init(self, *args, **kwargs):
+        old_session_init(self, *args, **kwargs)
+        self.events.register('creating-resource-class.s3.Bucket', add_custom_method)
+
+    Session.__init__ = new_session_init
 
 
 # TODO update
@@ -29,19 +43,18 @@ class PickleCodec(S3DictValueCodec):
 
 class S3Dict(Dict):
     def clear(self):
-        """ D.clear() -> None.  Remove all items from D. """
         for k in self:
             del self[k]
 
-    def get(self, item, default=None):  # real signature unknown
-        """ Return the value for key if key is in the dictionary, else default. """
+    def get(self, item, default=None):
+        """ Return the value for key if ky is in the dictionary, else default. """
         try:
             return self[item]
         except KeyError:
             return default
 
-    def items(self):  # real signature unknown; restored from __doc__
-        """ D.items() -> a set-like object providing a view on D's items """
+    def items(self):
+        # WARNING: this is NOT a dict_keys "view" object.
         for k in self:
             try:
                 v = self[k]
@@ -49,19 +62,12 @@ class S3Dict(Dict):
                 continue
             yield k, v
 
-    def keys(self):  # real signature unknown; restored from __doc__
-        """ D.keys() -> a set-like object providing a view on D's keys """
+    def keys(self):
         # WARNING: this is NOT a dict_keys "view" object.
         for k in self:
             yield k
 
-    def pop(self, k, *args):  # real signature unknown; restored from __doc__
-        """
-        D.pop(k[,d]) -> v, remove specified key and return the corresponding value.
-
-        If the key is not found, return the default if given; otherwise,
-        raise a KeyError.
-        """
+    def pop(self, k, *args):
         try:
             v = self[k]
             del self[k]
@@ -72,14 +78,7 @@ class S3Dict(Dict):
             raise
 
     def popitem(self):
-        """
-        Remove and return a (key, value) pair as a 2-tuple.
-
-        Pairs are returned in LIFO (last-in, first-out) order.
-        Raises KeyError if the dict is empty.
-
-        # ordering is not possible - NOT SUPPORTED
-        """
+        # It's unordered, BTW
         for k in self:
             try:
                 return k, self.pop(k)
@@ -107,7 +106,6 @@ class S3Dict(Dict):
         pass
 
     def values(self):
-        """ D.values() -> an object providing a view on D's values """
         for k in self.keys():
             try:
                 v = self[k]
@@ -116,8 +114,7 @@ class S3Dict(Dict):
             yield v
 
     def __contains__(self, item):
-        """ True if the dictionary has the specified key, else False. """
-        s3_key = self._item_to_s3_key(item)
+        s3_key = self._validate_item(item)
         try:
             self._s3_client.head_object(Bucket=self._bucket, Key=s3_key)
             return True
@@ -145,8 +142,7 @@ class S3Dict(Dict):
         return not (self == other)
 
     def __delitem__(self, item):
-        """ Delete self[key]. """
-        s3_key = self._item_to_s3_key(item)
+        s3_key = self._validate_item(item)
         try:
             self._s3_client.delete_object(Bucket=self._bucket, Key=s3_key)
         except ClientError as e:
@@ -157,9 +153,8 @@ class S3Dict(Dict):
                 raise RuntimeError("?")
 
     def __getitem__(self, item):
-        """ Return self[key]. """
         try:
-            s3_key = self._item_to_s3_key(item)
+            s3_key = self._validate_item(item)
             response = self._s3_client.get_object(Bucket=self._bucket, Key=s3_key)
             s3_content = response['Body'].read()
             return self._codec.decode(s3_content)
@@ -169,15 +164,12 @@ class S3Dict(Dict):
             else:
                 raise
 
-    _initialized = False
-
     def __init__(self, bucket, codec: S3DictValueCodec = PickleCodec()):
         self._bucket = bucket.name
         self._codec = codec
         self._s3_client = bucket.meta.client
 
     def __iter__(self):
-        """ Implement iter(self). """
         paginator = self._s3_client.get_paginator('list_objects_v2')
         for page in paginator.paginate(
                 Bucket=self._bucket,
@@ -186,19 +178,17 @@ class S3Dict(Dict):
                 yield self._s3_key_to_item(record['Key'])
 
     def __len__(self, *args, **kwargs):
-        """ Return len(self). """
         result = 0
         for _ in self:
             result += 1
         return result
 
     def __setitem__(self, item, value):
-        """ Set self[key] to value. """
         s3_content = self._codec.encode(value)
-        s3_key = self._item_to_s3_key(item)
+        s3_key = self._validate_item(item)
         self._s3_client.put_object(Bucket=self._bucket, Body=s3_content, Key=s3_key)
 
-    def _item_to_s3_key(self, item: str) -> str:
+    def _validate_item(self, item: str) -> str:
         if type(item) != str:
             raise KeyError('S3 key must be a string')
         if len(item) > 1024:
